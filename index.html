@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Video Note System Tag Context Menu</title>
+<style>
+:root { --bg:#1a1a1a; --text:#eee; --accent:#3498db; }
+body { font-family:sans-serif; background:var(--bg); color:var(--text); display:flex; gap:20px; padding:20px; margin:0; height:100vh; }
+#main { flex:2; display:flex; flex-direction:column; }
+#side { flex:1; border-left:1px solid #444; display:flex; flex-direction:column; }
+#player { width:100%; aspect-ratio:16/9; background:black; position:relative; }
+#scrubber { height:20px; background:#333; position:relative; margin-top:10px; cursor:pointer; }
+#playhead { position:absolute; width:3px; height:100%; background:#00aaff; }
+.marker { position:absolute; width:8px; height:100%; background:red; transform:translateX(-50%); cursor:pointer; }
+#viewer { margin-top:10px; background:#222; padding:10px; min-height:50px; }
+.tab-buttons { display:flex; border-bottom:1px solid #444; }
+.tab-buttons button { flex:1; padding:8px; background:#222; color:white; border:none; cursor:pointer; }
+.tab-buttons button.active { background:#333; border-bottom:2px solid var(--accent); }
+.tab-content { flex:1; overflow-y:auto; padding:5px; background:#1a1a1a; display:none; }
+.comment { background:#2a2a2a; padding:10px; margin-bottom:10px; cursor:pointer; border-radius:4px; position:relative; }
+.tags-tray { display:none; margin-top:5px; }
+.tags-tray.visible { display:block; }
+.tag { background:var(--accent); padding:2px 6px; margin:3px; display:inline-block; cursor:pointer; border-radius:3px; }
+#contextMenu, #noteModal, #confirmPopup, #preview {
+  position:fixed; background:#222; border:1px solid #444; display:none; z-index:2000; padding:8px;
+}
+#contextMenu div, #noteModal div, #confirmPopup div { cursor:pointer; padding:6px 10px; }
+#contextMenu div:hover, #noteModal div:hover, #confirmPopup div:hover { background:#3498db; }
+#preview { width:260px; height:150px; pointer-events:auto; border:2px solid var(--accent); background:black; }
+#confirmPopup button { margin:5px 3px 0 0; }
+textarea { width:200px; height:60px; background:#111; color:white; border:1px solid #444; }
+input.tagInput { width:100%; margin-top:5px; padding:4px; background:#111; color:white; border:1px solid #444; }
+.breadcrumbs { margin-bottom:5px; display:flex; gap:5px; flex-wrap:wrap; }
+.breadcrumbs span { background:#222; padding:2px 6px; border-radius:3px; cursor:pointer; }
+</style>
+</head>
+<body>
+
+<div id="main">
+<div class="breadcrumbs" id="windowCrumbs"></div>
+<div class="breadcrumbs" id="playerCrumbs"></div>
+<div class="breadcrumbs" id="commentCrumbs"></div>
+<button onclick="goBack('window')">⬅ Back Window</button>
+<button onclick="goBack('player')">⬅ Back Player</button>
+<button onclick="goBack('comment')">⬅ Back Comment</button>
+<div id="player"></div>
+<div id="scrubber"><div id="playhead"></div></div>
+<div id="viewer">Click a comment...</div>
+</div>
+
+<div id="side">
+<div class="tab-buttons">
+ <button class="active" onclick="openTab('playlist', this)">Playlist</button>
+ <button onclick="openTab('comments', this)">Comments</button>
+ <button onclick="openTab('other', this)">Other</button>
+</div>
+<div id="playlist" class="tab-content">Playlist content...</div>
+<div id="comments" class="tab-content"></div>
+<div id="other" class="tab-content">Other content</div>
+</div>
+
+<div id="preview"></div>
+<div id="contextMenu"></div>
+<div id="noteModal"></div>
+<div id="confirmPopup">
+  <div id="confirmText"></div>
+  <button id="confirmYes">Yes</button>
+  <button id="confirmNo">No</button>
+</div>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+const db={
+  "current": "vid8",
+  "videos": {
+    "vid1": {"url":"https://www.youtube.com/embed/bESGLojNYSo?enablejsapi=1","duration":240,"title":"Lady Gaga - Poker Face"},
+    "vid2": {"url":"https://www.youtube.com/embed/LsoLEjrDogU?enablejsapi=1","duration":270,"title":"Mark Ronson ft. Bruno Mars - Uptown Funk"},
+    "vid3": {"url":"https://www.youtube.com/embed/Wm6CUkswsNw?enablejsapi=1","duration":212,"title":"Training"},
+    "vid4": {"url":"https://www.youtube.com/embed/fLexgOxsZu0?enablejsapi=1","duration":230,"title":"Pharrell Williams - Happy"},
+    "vid5": {"url":"https://www.youtube.com/embed/OPf0YbXqDm0?enablejsapi=1","duration":270,"title":"Mark Ronson & Bruno Mars - Uptown Funk"}, 
+    "vid6": {"url":"https://www.youtube.com/embed/rfscVS0vtbw?enablejsapi=1","duration":4800,"title":"Learn Python - Full Course for Beginners"},
+    "vid7": {"url":"https://www.youtube.com/embed/0pThnRneDjw?enablejsapi=1","duration":600,"title":"CrashCourse - Computer Science #1"},
+    "vid8": {"url":"https://www.youtube.com/embed/z7t31yWsTtA?enablejsapi=1","duration":720,"title":"Messer A+"},
+    "vid9": {"url":"https://www.youtube.com/embed/31r4Xj8P3zc?enablejsapi=1","duration":900,"title":"3Blue1Brown - Neural Networks Explained"},
+    "vid10":{"url":"https://www.youtube.com/embed/zOjov‑xJm88?enablejsapi=1","duration":1200,"title":"CrashCourse - World History"},
+    "vid14":{"url":"https://www.youtube.com/embed/ZoG5jJ3E8rg?si=v8jq3CEO4q4IrZaa","duration":1200,"title":"Iyaz - Replay"}
+    
+  },
+  "comments": {
+    "vid1":[
+      {"text":"Iconic pop track!","time":10,"tags":[{"label":"See Uptown Funk","vid":"vid2","time":8},{"label":"Happy vibes","vid":"vid4","time":12},{"label":"MusicVideo"}]},
+      {"text":"Best hook ever","time":40,"tags":[{"label":"See See You Again","vid":"vid3","time":20},{"label":"PopClassic"}]},
+      {"text":"Production side talk","time":75,"tags":[{"label":"CrashCourse CS","vid":"vid7","time":30},{"label":"MusicTheory"}]},
+      {"text":"Beat sync tips","time":110,"tags":[{"label":"JS Tutorial","vid":"vid8","time":45},{"label":"Uptown Funk"}]},
+      {"text":"Some A+","time":150,"tags":[{"label":"A+ H/Ware","vid":"vid8","time":20},{"label":"P. Messer NN","vid":"vid8","time":10}]},
+      {"text":"Chorus breakdown","time":185,"tags":[{"label":"MusicBreak"}]},
+      {"text":"Replay step","time":205,"tags":[{"label":"Replay",vid:"vid14"}]},
+      {"text":"Music production tip","time":225,"tags":[{"label":"Prod"}]},
+      {"text":"Cross genre link","time":235,"tags":[{"label":"HappyFun","vid":"vid4","time":8}]},
+      {"text":"Loop again!","time":250,"tags":[{"label":"Loop"}]}
+    ],
+    "vid2":[
+      {"text":"Funky groove!","time":15,"tags":[{"label":"Link Poker Face","vid":"vid1","time":10},{"label":"See You Again","vid":"vid3","time":18},{"label":"FunkClassic"}]},
+      {"text":"Compare neural nets","time":45,"tags":[{"label":"Neural expl","vid":"vid9","time":50},{"label":"JS Rapid","vid":"vid8","time":30}]},
+      {"text":"Rhythm tutorial","time":75,"tags":[{"label":"Crash CS","vid":"vid7","time":140},{"label":"MusicTheory"}]},
+      {"text":"Historical context","time":120,"tags":[{"label":"World History","vid":"vid10","time":80}]},
+      {"text":"Feel good track","time":155,"tags":[{"label":"HappySummer","vid":"vid4","time":20}]},
+      {"text":"Beat loop tip","time":180,"tags":[{"label":"Loop"}]},
+      {"text":"Prod secrets","time":200,"tags":[{"label":"ProdTalk"}]},
+      {"text":"Replay groove","time":230,"tags":[{"label":"Replay"}]},
+      {"text":"Mashup idea","time":250,"tags":[{"label":"Mashup"}]},
+      {"text":"Music and code sync","time":260,"tags":[{"label":"JS Tutorial","vid":"vid8","time":120}]}
+    ],
+    "vid3":[
+      {"text":"Emotional pop ballad","time":12,"tags":[{"label":"Happy","vid":"vid4","time":15},{"label":"World History","vid":"vid10","time":25},{"label":"MusicVideo"}]},
+      {"text":"Music structure rule","time":35,"tags":[{"label":"CrashCourse CS","vid":"vid7","time":60},{"label":"MusicTheory"}]},
+      {"text":"Best for breaks","time":60,"tags":[{"label":"JS Rapid","vid":"vid8","time":50}]},
+      {"text":"Hook comparison","time":90,"tags":[{"label":"Poker Face","vid":"vid1","time":40},{"label":"Uptown Funk","vid":"vid2","time":18},{"label":"Happy"}]},
+      {"text":"Historical lyrics tie","time":120,"tags":[{"label":"World Hist Link","vid":"vid10","time":95}]},
+      {"text":"Music programming analogy","time":150,"tags":[{"label":"JS Rapid","vid":"vid8","time":100},{"label":"Neural expl","vid":"vid9","time":60}]},
+      {"text":"Loop hook","time":180,"tags":[{"label":"Loop"}]},
+      {"text":"Replay chorus","time":200,"tags":[{"label":"Replay"}]},
+      {"text":"Prod chat","time":220,"tags":[{"label":"ProdTalk"}]},
+      {"text":"Tag link fun","time":230,"tags":[{"label":"3Blue1Brown","vid":"vid9","time":80}]}
+    ],
+    "vid4":[
+      {"text":"Happy mood pop","time":10,"tags":[{"label":"Link Poker Face","vid":"vid1","time":15},{"label":"See Uptown Funk","vid":"vid2","time":12},{"label":"FeelGood"}]},
+      {"text":"Programming mood switch","time":45,"tags":[{"label":"CrashCourse CS","vid":"vid7","time":90}]},
+      {"text":"Code music analogy","time":75,"tags":[{"label":"JS Rapid","vid":"vid8","time":130},{"label":"Neural expl","vid":"vid9","time":50}]},
+      {"text":"Music history tie","time":100,"tags":[{"label":"World Hist","vid":"vid10","time":60}]},
+      {"text":"Loop rhythm","time":130,"tags":[{"label":"Loop"}]},
+      {"text":"Replay hit","time":155,"tags":[{"label":"Replay"}]},
+      {"text":"Prod secrets","time":180,"tags":[{"label":"ProdTalk"}]},
+      {"text":"Hook study","time":200,"tags":[{"label":"MusicTheory"}]},
+      {"text":"Pop culture","time":220,"tags":[]},
+      {"text":"Encore!","time":230,"tags":[]}
+    ],
+    "vid6":[
+      {"text":"Intro to Python basics","time":60,"tags":[{"label":"JS Rapid","vid":"vid8","time":20},{"label":"Crash CS","vid":"vid7","time":90}]},
+      {"text":"Variables explained","time":300,"tags":[{"label":"PythonVars"}]},
+      {"text":"Loops & logic","time":600,"tags":[{"label":"PythonLoops"}]},
+      {"text":"Functions overview","time":1200,"tags":[{"label":"PythonFuncs"}]},
+      {"text":"Data structures intro","time":1800,"tags":[{"label":"PythonDS"}]},
+      {"text":"Use neural nets later","time":2400,"tags":[{"label":"Neural expl","vid":"vid9","time":10}]},
+      {"text":"Prod tip for dev","time":3000,"tags":[{"label":"DevProd"}]},
+      {"text":"World history tie","time":3600,"tags":[{"label":"World Hist","vid":"vid10","time":200}]},
+      {"text":"Replay lesson","time":4200,"tags":[{"label":"Replay"}]},
+      {"text":"Loop back","time":4600,"tags":[{"label":"Loop"}]}
+    ],
+    "vid7":[
+      {"text":"CrashCourse entry","time":15,"tags":[{"label":"Python Basics","vid":"vid6","time":60},{"label":"JS Rapid","vid":"vid8","time":30}]},
+      {"text":"Compute fundamentals","time":90,"tags":[{"label":"CompFund"}]},
+      {"text":"Memory concept","time":180,"tags":[{"label":"Memory"}]},
+      {"text":"Systems intro","time":270,"tags":[{"label":"Systems"}]},
+      {"text":"Proc loops","time":360,"tags":[{"label":"Loops"}]},
+      {"text":"Tie back to Python","time":450,"tags":[{"label":"PythonLoops","vid":"vid6","time":600}]},
+      {"text":"Neural intro","time":540,"tags":[{"label":"Neural expl","vid":"vid9","time":100}]},
+      {"text":"Replay lesson","time":630,"tags":[{"label":"Replay"}]},
+      {"text":"Prod talk","time":700,"tags":[{"label":"ProdTalk"}]},
+      {"text":"Loop again","time":780,"tags":[{"label":"Loop"}]}
+    ],
+  "vid8":[
+      {"text":"CrashCourse entry","time":15,"tags":[{"label":"Python Basics","vid":"vid6","time":60},{"label":"JS Rapid","vid":"vid8","time":30}]},
+      {"text":"Compute fundamentals","time":90,"tags":[{"label":"CompFund"}]},
+      {"text":"Memory concept","time":180,"tags":[{"label":"Memory"}]},
+      {"text":"Systems intro","time":270,"tags":[{"label":"Systems"}]},
+      {"text":"Proc loops","time":360,"tags":[{"label":"Loops"}]},
+      {"text":"Tie back to Python","time":450,"tags":[{"label":"PythonLoops","vid":"vid6","time":600}]},
+      {"text":"Neural intro","time":540,"tags":[{"label":"Neural expl","vid":"vid9","time":100}]},
+      {"text":"Replay lesson","time":80,"tags":[{"label":"Replay","vid":"vid14"}]},
+      {"text":"Prod talk","time":700,"tags":[{"label":"ProdTalk"}]},
+      {"text":"Loop again","time":780,"tags":[{"label":"Loop"}]},
+      {"text":"Production side talk","time":75,"tags":[{"label":"CrashCourse CS","vid":"vid7","time":30},{"label":"MusicTheory"}]},
+      {"text":"Beat sync tips","time":110,"tags":[{"label":"JS Tutorial","vid":"vid8","time":45},{"label":"Uptown Funk"}]},
+      {"text":"Some A+","time":150,"tags":[{"label":"A+ H/Ware","vid":"vid8","time":20},{"label":"P. Messer NN","vid":"vid8","time":10}]},
+      {"text":"Chorus breakdown","time":185,"tags":[{"label":"MusicBreak"}]}
+      
+    ]
+ },//Close the comments object
+  "annotations":[]
+}
+
+const state={history:[],windowHist:[],playerHist:[],commentHist:[]};
+let player, previewPlayer, previewMode=null;
+let pendingTime=0;
+
+function getID(u){return u.match(/embed\/(.*?)\?/)[1];}
+function onYouTubeIframeAPIReady(){ loadVideo(db.current,0,false); }
+function getTime(){return player && typeof player.getCurrentTime==='function'?player.getCurrentTime():0;}
+
+function loadVideo(v, t = 0, trackHistory = true, origin = 'player') {
+
+    // Track history BEFORE switching video
+    if (trackHistory && player) {
+        if (origin === 'player') state.playerHist.push({ v: db.current, t: getTime() });
+        if (origin === 'window') state.windowHist.push({ v: db.current, t: getTime() });
+        if (origin === 'comment') state.commentHist.push({ v: db.current, t: getTime() });
+    }
+
+    // ✅ Always set current FIRST
+    db.current = v;
+
+    // If player already exists
+    if (player && typeof player.loadVideoById === 'function') {
+        player.loadVideoById(getID(db.videos[v].url), t);
+
+        // ✅ Ensure render happens AFTER switch
+        setTimeout(() => {
+            render();
+            updateBreadcrumbs();
+        }, 0);
+
+    } else {
+        // First-time initialization
+        player = new YT.Player('player', {
+            videoId: getID(db.videos[v].url),
+            events: {
+                onReady: (e) => {
+                    player = e.target;
+
+                    track();
+
+                    // ✅ First safe render
+                    render();
+                    updateBreadcrumbs();
+                }
+            }
+        });
+    }
+}
+function goBack(origin){
+ let hist=null;
+ if(origin==='player') hist=state.playerHist;
+ if(origin==='window') hist=state.windowHist;
+ if(origin==='comment') hist=state.commentHist;
+ if(!hist || hist.length===0) return;
+ let h=hist.pop();
+ loadVideo(h.v,h.t,false,origin);
+}
+
+function updateBreadcrumbs(){
+ const w=document.getElementById('windowCrumbs'), p=document.getElementById('playerCrumbs'), c=document.getElementById('commentCrumbs');
+ w.innerHTML=state.windowHist.map(h=>`<span onclick="loadVideo('${h.v}',${h.t},false,'window')">${db.videos[h.v].title}</span>`).join('');
+ p.innerHTML=state.playerHist.map(h=>`<span onclick="loadVideo('${h.v}',${h.t},false,'player')">${db.videos[h.v].title}</span>`).join('');
+ c.innerHTML=state.commentHist.map(h=>`<span onclick="loadVideo('${h.v}',${h.t},false,'comment')">${db.videos[h.v].title}</span>`).join('');
+}
+
+function track(){function loop(){let t=getTime(); let d=db.videos[db.current].duration; document.getElementById('playhead').style.left=(t/d*100)+"%"; requestAnimationFrame(loop);} loop();}
+
+const scrubber=document.getElementById('scrubber');
+scrubber.ondblclick=e=>{
+ e.stopPropagation();
+ let r=scrubber.getBoundingClientRect();
+ pendingTime=((e.clientX-r.left)/r.width)*db.videos[db.current].duration;
+ const ctx=document.getElementById('contextMenu');
+ ctx.style.display='block';
+ ctx.style.left=e.pageX+'px';
+ ctx.style.top=e.pageY+'px';
+ ctx.innerHTML=`<div onclick="addMarker()">Add Marker</div>
+<div onclick="openNoteModal()">Add Comment/Note</div>
+<div onclick="jumpTo()">Jump Here</div>`;
+};
+
+function addMarker(){db.annotations.push({vid:db.current,time:pendingTime}); closeAll(); render();}
+function jumpTo(){player.seekTo(pendingTime,true); closeAll();}
+
+function openNoteModal(){
+ const modal=document.getElementById('noteModal');
+ modal.style.display='block';
+ modal.style.left='40%'; modal.style.top='30%';
+ modal.innerHTML=`<div>Add Note @ ${pendingTime.toFixed(1)}s</div>
+<textarea id='noteText'></textarea>
+<input class='tagInput' placeholder='Add comma-separated tags (label[:vid:time])'>
+<br><button onclick='saveNote()'>Save</button>`;
+ document.getElementById('noteText').focus();
+}
+
+function saveNote(){
+ let text=document.getElementById('noteText').value;
+ let tagsInput=document.querySelector('.tagInput').value.split(',').map(s=>s.trim()).filter(s=>s);
+ let tags=tagsInput.map(t=>{let parts=t.split(':'); return {label:parts[0], vid:parts[1]||'', time:parseFloat(parts[2]||0)}});
+
+ if(!text) return;
+ if(!db.comments[db.current]) db.comments[db.current]=[];
+ db.comments[db.current].push({text,time:pendingTime,tags:tags});
+ db.annotations.push({vid:db.current,time:pendingTime});
+ closeAll(); render();
+}
+
+function closeAll(){
+ document.getElementById('contextMenu').style.display='none';
+ document.getElementById('noteModal').style.display='none';
+ document.getElementById('confirmPopup').style.display='none';
+ if(previewMode==='hover') hidePreview();
+}
+
+window.onclick=(e)=>{if(!document.getElementById('contextMenu').contains(e.target)&&!document.getElementById('noteModal').contains(e.target)) closeAll();};
+
+function preview(e,vid,time,text,mode="hover"){
+ previewMode = mode;
+ const previewBox = document.getElementById('preview');
+ previewBox.style.display='block';
+ previewBox.style.left=(e.clientX+10)+'px';
+ previewBox.style.top=(e.clientY+10)+'px';
+ previewBox.innerHTML='';
+
+ if(text){
+     let textEl=document.createElement('div');
+     textEl.style.color='white'; textEl.style.marginBottom='4px';
+     textEl.innerText=text; previewBox.appendChild(textEl);
+ }
+
+ if(mode==="manual"){
+     let closeBtn=document.createElement('button');
+     closeBtn.innerText='✖';
+     closeBtn.style.position='absolute';
+     closeBtn.style.top='4px';
+     closeBtn.style.right='4px';
+     closeBtn.onclick=()=>{ previewBox.style.display='none'; previewMode=null; };
+     previewBox.appendChild(closeBtn);
+ }
+
+ if(vid){
+     if(!previewPlayer){
+         previewPlayer=new YT.Player('preview',{
+             videoId:getID(db.videos[vid].url),
+             playerVars:{autoplay:1,mute:1},
+             events:{onReady:(p)=>{previewPlayer=p.target; previewPlayer.seekTo(time||0,true);}}
+         });
+     } else if(typeof previewPlayer.loadVideoById==='function'){
+         previewPlayer.loadVideoById(getID(db.videos[vid].url),time||0);
+     }
+ }
+}
+
+function hidePreview(){
+ if(previewMode==='hover'){
+     document.getElementById('preview').style.display='none';
+     previewMode=null;
+ }
+}
+
+function openTagContext(e,tag){
+ e.stopPropagation();
+ const ctx=document.getElementById('contextMenu');
+ ctx.style.display='block';
+ ctx.style.left=e.pageX+'px';
+ ctx.style.top=e.pageY+'px';
+ ctx.innerHTML=`<div onclick="loadVideo('${tag.vid}',${tag.time||0})">Open in Current Player</div>
+<div onclick="window.open('${db.videos[tag.vid]?.url}','_blank')">Open in New Tab</div>
+<div onclick="preview(event,'${tag.vid}',${tag.time||0},'${tag.label}','manual')">Open in Preview Mini</div>`;
+}
+
+function render(){
+ openTab('comments',document.querySelector('.tab-buttons button:nth-child(2)'));
+ const comContainer=document.getElementById('comments'); 
+ comContainer.innerHTML='';
+ scrubber.querySelectorAll('.marker').forEach(m=>m.remove());
+
+ db.comments[db.current]?.forEach(c=>{
+ //alert("Inrender dbCurrent="+db.current+" comments="+db.comments[db.current])
+  let div=document.createElement('div'); 
+  div.className='comment';
+  div.innerHTML=`<div>${c.text}</div>`;
+
+  let tray=null;
+  if(c.tags.length>0){
+     tray=document.createElement('div'); 
+     tray.className='tags-tray';
+     c.tags.forEach(t=>{
+       let tagEl=document.createElement('span'); 
+       tagEl.className='tag'; 
+       tagEl.innerText=t.label;
+
+       // Hover preview for tag
+       tagEl.onmouseenter = (ev) => { if(t.vid) preview(ev, t.vid, t.time||0, t.label,'hover'); };
+       tagEl.onmouseleave = hidePreview;
+
+       tagEl.onclick=ev => openTagContext(ev, t);
+       tray.appendChild(tagEl);
+     });
+     div.appendChild(tray);
+  }
+
+  div.onclick = (ev) => {
+      document.getElementById('viewer').innerText = c.text + " @ " + c.time + "s";
+      if(tray) tray.classList.add('visible');
+
+      state.commentHist.push({v:db.current,t:c.time});
+      updateBreadcrumbs();
+
+      setTimeout(()=>{
+          const popup=document.getElementById('confirmPopup');
+          document.getElementById('confirmText').innerText = `Jump to ${c.time.toFixed(1)}s in current video?`;
+          popup.style.left=ev.clientX+'px';
+          popup.style.top=ev.clientY+'px';
+          popup.style.display='block';
+          document.getElementById('confirmYes').onclick=()=>{player.seekTo(c.time,true); popup.style.display='none';};
+          document.getElementById('confirmNo').onclick=()=>{popup.style.display='none';};
+      },0);
+  };
+
+  div.onmouseenter=e=>{
+      const ctx=document.getElementById('contextMenu');
+      ctx.style.display='block';
+      ctx.style.left=(e.clientX+10)+'px';
+      ctx.style.top=(e.clientY+10)+'px';
+      ctx.innerHTML=`<div id="previewOption">Preview</div><div>Other Option</div>`;
+      const previewOption=document.getElementById('previewOption');
+      previewOption.onmouseenter=()=>preview(e,db.current,c.time,c.text,'hover');
+      previewOption.onmouseleave=hidePreview;
+      ctx.onmouseleave=hidePreview;
+  };
+
+  div.onmouseleave=e=>{setTimeout(()=>{if(!document.getElementById('contextMenu').matches(':hover')) hidePreview();},50);};
+
+  comContainer.appendChild(div);
+ });
+
+ db.annotations.filter(a=>a.vid===db.current).forEach(a=>{
+  let m=document.createElement('div'); 
+  m.className='marker'; 
+  m.style.left=(a.time/db.videos[a.vid].duration*100)+'%';
+  m.onmousemove=e=>{
+      let c=db.comments[db.current].find(cc=>cc.time===a.time); 
+      if(c) preview(e,db.current,a.time,c.text,'hover');
+  };
+  m.onmouseleave=hidePreview;
+  scrubber.appendChild(m);
+ });
+}
+
+function openTab(name,btn){['playlist','comments','other'].forEach(t=>document.getElementById(t).style.display=(t===name?'block':'none')); document.querySelectorAll('.tab-buttons button').forEach(b=>b.classList.remove('active')); btn.classList.add('active');}
+function onYouTubeIframeAPIReady(){
+    init();
+}
+
+function init(){
+    loadVideo(db.current, 0, false, 'player');
+}
+
+// Initial render
+//document.addEventListener('DOMContentLoaded',()=>{render();});
+
+</script>
+</body>
+</html>
